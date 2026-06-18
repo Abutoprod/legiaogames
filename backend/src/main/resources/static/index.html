@@ -547,13 +547,27 @@ function connectSSE() {
   eventSource.onopen = () => {
     const el = document.getElementById('conn-status');
     el.textContent = 'Conectado ●'; el.style.color = '#34d399';
+    // Ao reconectar, busca dados frescos (importante no iOS após background)
+    loadMachines();
   };
   eventSource.onerror = () => {
     const el = document.getElementById('conn-status');
     el.textContent = 'Reconectando...'; el.style.color = '#f59e0b';
-    setTimeout(connectSSE, 5000);
+    eventSource.close();
+    eventSource = null;
+    setTimeout(connectSSE, 4000);
   };
 }
+
+// Quando o usuário volta ao app (iOS/Android/desktop)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    loadMachines();           // dados frescos do servidor
+    if (!eventSource || eventSource.readyState === EventSource.CLOSED) {
+      connectSSE();           // reconecta SSE se caiu
+    }
+  }
+});
 
 // ==========================================
 //  Add / Edit
