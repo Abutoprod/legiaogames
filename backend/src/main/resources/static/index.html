@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="LAN House" />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="manifest" href="/manifest.json" />
+  <title>LAN House Control</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    body { background: #0f172a; color: #f1f5f9; font-family: system-ui, -apple-system, sans-serif; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 16px; }
+    .status-available  { background: #064e3b; border-color: #10b981; color: #6ee7b7; }
+    .status-busy       { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+    .status-offline    { background: #1f1f1f; border-color: #6b7280; color: #9ca3af; }
+    .status-maintenance{ background: #451a03; border-color: #f59e0b; color: #fcd34d; }
+    .btn { border-radius: 10px; padding: 8px 16px; font-weight: 600; font-size: 14px; cursor: pointer; transition: all .15s; border: none; }
+    .btn:active { transform: scale(.96); }
+    .btn-green  { background: #059669; color: #fff; }
+    .btn-green:hover  { background: #047857; }
+    .btn-red    { background: #dc2626; color: #fff; }
+    .btn-red:hover    { background: #b91c1c; }
+    .btn-yellow { background: #d97706; color: #fff; }
+    .btn-yellow:hover { background: #b45309; }
+    .btn-gray   { background: #374151; color: #d1d5db; }
+    .btn-gray:hover   { background: #4b5563; }
+    .btn-blue   { background: #2563eb; color: #fff; }
+    .btn-blue:hover   { background: #1d4ed8; }
+    .timer { font-variant-numeric: tabular-nums; font-size: 2rem; font-weight: 700; letter-spacing: .05em; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 50; display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .modal { background: #1e293b; border: 1px solid #334155; border-radius: 20px; padding: 24px; width: 100%; max-width: 420px; }
+    input, select { background: #0f172a; border: 1px solid #475569; border-radius: 10px; color: #f1f5f9; padding: 10px 14px; font-size: 16px; width: 100%; outline: none; }
+    input:focus, select:focus { border-color: #3b82f6; }
+    .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+    .pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.5; } }
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #1e293b; border: 1px solid #334155; padding: 12px 24px; border-radius: 12px; font-size: 14px; z-index: 100; white-space: nowrap; box-shadow: 0 8px 32px rgba(0,0,0,.5); }
+    #install-banner { display: none; }
+  </style>
+</head>
+<body class="min-h-screen">
+
+<!-- Header -->
+<header class="sticky top-0 z-40 px-4 py-3" style="background:#0f172a; border-bottom:1px solid #1e293b;">
+  <div class="max-w-2xl mx-auto flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <span class="text-2xl">💻</span>
+      <div>
+        <h1 class="text-lg font-bold leading-none">LAN House</h1>
+        <p class="text-xs text-slate-400" id="conn-status">Conectando...</p>
+      </div>
+    </div>
+    <button onclick="openAddModal()" class="btn btn-blue flex items-center gap-1">
+      <span style="font-size:18px;">+</span> Máquina
+    </button>
+  </div>
+</header>
+
+<!-- Install banner (PWA) -->
+<div id="install-banner" class="px-4 py-2 text-center text-sm text-yellow-300" style="background:#451a03;">
+  📱 Adicione ao início para receber notificações quando o tempo acabar.
+  <button onclick="installPwa()" class="ml-2 underline font-bold">Instalar</button>
+  <button onclick="document.getElementById('install-banner').style.display='none'" class="ml-3 text-yellow-500">✕</button>
+</div>
+
+<!-- Notify permission banner -->
+<div id="notify-banner" class="px-4 py-2 text-center text-sm text-blue-300 hidden" style="background:#1e3a5f;">
+  🔔 Ative as notificações para ser avisado quando o tempo acabar.
+  <button onclick="requestNotifyPermission()" class="ml-2 underline font-bold">Ativar</button>
+  <button onclick="document.getElementById('notify-banner').classList.add('hidden')" class="ml-3 text-blue-400">✕</button>
+</div>
+
+<!-- Main -->
+<main class="max-w-2xl mx-auto px-4 py-4">
+
+  <!-- Stats bar -->
+  <div class="grid grid-cols-3 gap-3 mb-5">
+    <div class="card p-3 text-center">
+      <div class="text-2xl font-bold text-emerald-400" id="stat-available">0</div>
+      <div class="text-xs text-slate-400 mt-1">Disponíveis</div>
+    </div>
+    <div class="card p-3 text-center">
+      <div class="text-2xl font-bold text-blue-400" id="stat-busy">0</div>
+      <div class="text-xs text-slate-400 mt-1">Em uso</div>
+    </div>
+    <div class="card p-3 text-center">
+      <div class="text-2xl font-bold text-slate-400" id="stat-other">0</div>
+      <div class="text-xs text-slate-400 mt-1">Inativas</div>
+    </div>
+  </div>
+
+  <!-- Machine grid -->
+  <div id="machines-grid" class="grid grid-cols-1 gap-3 sm:grid-cols-2"></div>
+  <div id="empty-state" class="hidden text-center py-16 text-slate-500">
+    <div class="text-5xl mb-4">🖥️</div>
+    <p class="text-lg font-medium">Nenhuma máquina cadastrada</p>
+    <p class="text-sm mt-1">Clique em "+ Máquina" para adicionar</p>
+  </div>
+</main>
+
+<!-- ====== MODALS ====== -->
+
+<!-- Add/Edit Machine Modal -->
+<div id="modal-add" class="modal-overlay hidden">
+  <div class="modal">
+    <h2 class="text-lg font-bold mb-4" id="modal-add-title">Nova Máquina</h2>
+    <input type="text" id="input-machine-name" placeholder="Ex: PC 01" maxlength="30" />
+    <div class="flex gap-2 mt-4">
+      <button onclick="closeModal('modal-add')" class="btn btn-gray flex-1">Cancelar</button>
+      <button onclick="saveMachine()" class="btn btn-blue flex-1">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Start Session Modal -->
+<div id="modal-start" class="modal-overlay hidden">
+  <div class="modal">
+    <h2 class="text-lg font-bold mb-1" id="modal-start-title">Iniciar Sessão</h2>
+    <p class="text-sm text-slate-400 mb-4" id="modal-start-subtitle"></p>
+    <div class="space-y-3">
+      <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-600 cursor-pointer hover:border-blue-500" id="opt-timed">
+        <input type="radio" name="session-type" value="timed" class="accent-blue-500 w-4 h-4" checked onchange="toggleTimedInput()" />
+        <div>
+          <div class="font-medium">Tempo definido</div>
+          <div class="text-xs text-slate-400">Alerta quando acabar</div>
+        </div>
+      </label>
+      <div id="timed-inputs" class="pl-7">
+        <div class="flex gap-2">
+          <div class="flex-1">
+            <label class="text-xs text-slate-400 mb-1 block">Horas</label>
+            <input type="number" id="input-hours" min="0" max="23" value="0" placeholder="0" />
+          </div>
+          <div class="flex-1">
+            <label class="text-xs text-slate-400 mb-1 block">Minutos</label>
+            <input type="number" id="input-minutes" min="0" max="59" value="60" placeholder="60" />
+          </div>
+        </div>
+      </div>
+      <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-600 cursor-pointer hover:border-blue-500">
+        <input type="radio" name="session-type" value="unlimited" class="accent-blue-500 w-4 h-4" onchange="toggleTimedInput()" />
+        <div>
+          <div class="font-medium">Sem limite de tempo</div>
+          <div class="text-xs text-slate-400">Você finaliza manualmente</div>
+        </div>
+      </label>
+    </div>
+    <div class="flex gap-2 mt-5">
+      <button onclick="closeModal('modal-start')" class="btn btn-gray flex-1">Cancelar</button>
+      <button onclick="confirmStart()" class="btn btn-green flex-1">Iniciar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Machine Options Modal -->
+<div id="modal-options" class="modal-overlay hidden">
+  <div class="modal">
+    <h2 class="text-lg font-bold mb-4" id="modal-options-title">Opções</h2>
+    <div class="space-y-2" id="modal-options-buttons"></div>
+    <button onclick="closeModal('modal-options')" class="btn btn-gray w-full mt-4">Fechar</button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast hidden"></div>
+
+<script>
+// ==========================================
+//  State
+// ==========================================
+let machines = {};    // { id: machineDto }
+let editingId = null; // para modal add/edit
+let startingId = null; // para modal start
+
+// ==========================================
+//  API helpers
+// ==========================================
+async function api(path, method = 'GET', body = null) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch('/api' + path, opts);
+  if (!res.ok) throw new Error(await res.text());
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+// ==========================================
+//  Load machines
+// ==========================================
+async function loadMachines() {
+  try {
+    const list = await api('/machines');
+    machines = {};
+    list.forEach(m => machines[m.id] = m);
+    renderAll();
+  } catch (e) {
+    console.error('Erro ao carregar máquinas', e);
+  }
+}
+
+// ==========================================
+//  Render
+// ==========================================
+function renderAll() {
+  const grid = document.getElementById('machines-grid');
+  const empty = document.getElementById('empty-state');
+  const list = Object.values(machines);
+
+  if (list.length === 0) {
+    grid.innerHTML = '';
+    empty.classList.remove('hidden');
+  } else {
+    empty.classList.add('hidden');
+    grid.innerHTML = list.map(renderCard).join('');
+  }
+
+  updateStats(list);
+}
+
+function renderCard(m) {
+  const statusClass = {
+    AVAILABLE: 'status-available',
+    BUSY: 'status-busy',
+    OFFLINE: 'status-offline',
+    MAINTENANCE: 'status-maintenance'
+  }[m.status] || 'status-offline';
+
+  const statusLabel = {
+    AVAILABLE: '✅ Disponível',
+    BUSY: '🔵 Em uso',
+    OFFLINE: '⚫ Offline',
+    MAINTENANCE: '🔧 Manutenção'
+  }[m.status];
+
+  let timerHtml = '';
+  if (m.status === 'BUSY' && m.currentSession) {
+    const s = m.currentSession;
+    if (s.secondsRemaining === -1) {
+      timerHtml = `<div class="timer text-blue-300 mt-2">∞</div><p class="text-xs text-slate-400">Sem limite</p>`;
+    } else {
+      const t = formatSeconds(s.secondsRemaining);
+      const color = s.secondsRemaining < 300 ? 'text-red-400' : 'text-blue-300';
+      timerHtml = `<div class="timer ${color} mt-2" id="timer-${m.id}">${t}</div>
+                   <p class="text-xs text-slate-400">${s.durationMinutes} min total</p>`;
+    }
+  }
+
+  return `
+  <div class="card p-4 ${statusClass}" id="card-${m.id}">
+    <div class="flex items-start justify-between">
+      <div class="flex-1 min-w-0">
+        <h3 class="font-bold text-lg truncate">${escHtml(m.name)}</h3>
+        <span class="badge mt-1" style="background:rgba(0,0,0,.3);">${statusLabel}</span>
+      </div>
+      <button onclick="openOptions(${m.id})" class="ml-2 p-2 rounded-lg hover:bg-black/20 text-slate-300" style="font-size:20px;">⋯</button>
+    </div>
+    ${timerHtml}
+    <div class="mt-3 flex gap-2 flex-wrap">
+      ${m.status === 'AVAILABLE' ? `<button onclick="openStart(${m.id})" class="btn btn-green">▶ Iniciar</button>` : ''}
+      ${m.status === 'BUSY' ? `<button onclick="stopSession(${m.id})" class="btn btn-red">⏹ Finalizar</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function updateStats(list) {
+  document.getElementById('stat-available').textContent = list.filter(m => m.status === 'AVAILABLE').length;
+  document.getElementById('stat-busy').textContent = list.filter(m => m.status === 'BUSY').length;
+  document.getElementById('stat-other').textContent = list.filter(m => m.status === 'OFFLINE' || m.status === 'MAINTENANCE').length;
+}
+
+function formatSeconds(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${pad(h)}:${pad(m)}:${pad(s)}`;
+  return `${pad(m)}:${pad(s)}`;
+}
+
+function pad(n) { return String(n).padStart(2, '0'); }
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ==========================================
+//  Timers (client-side countdown)
+// ==========================================
+function tickTimers() {
+  Object.values(machines).forEach(m => {
+    if (m.status !== 'BUSY' || !m.currentSession) return;
+    const s = m.currentSession;
+    if (s.secondsRemaining === -1) return;
+    if (s.secondsRemaining > 0) {
+      s.secondsRemaining = Math.max(0, s.secondsRemaining - 1);
+    }
+    const el = document.getElementById(`timer-${m.id}`);
+    if (!el) return;
+    el.textContent = formatSeconds(s.secondsRemaining);
+    if (s.secondsRemaining < 300) {
+      el.classList.remove('text-blue-300');
+      el.classList.add('text-red-400');
+    }
+    if (s.secondsRemaining === 0) {
+      el.classList.add('pulse');
+    }
+  });
+}
+setInterval(tickTimers, 1000);
+
+// ==========================================
+//  SSE — updates from server
+// ==========================================
+let eventSource = null;
+
+function connectSSE() {
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource('/api/events');
+
+  eventSource.addEventListener('update', e => {
+    const m = JSON.parse(e.data);
+    machines[m.id] = m;
+    renderAll();
+  });
+
+  eventSource.addEventListener('tick', e => {
+    const m = JSON.parse(e.data);
+    if (machines[m.id]) {
+      machines[m.id].currentSession = m.currentSession;
+    }
+  });
+
+  eventSource.addEventListener('delete', e => {
+    const id = JSON.parse(e.data);
+    delete machines[id];
+    renderAll();
+  });
+
+  eventSource.addEventListener('expired', e => {
+    const m = JSON.parse(e.data);
+    machines[m.id] = m;
+    renderAll();
+    showToast(`⏰ Tempo esgotado: ${m.name}`);
+    playBeep();
+  });
+
+  eventSource.onopen = () => {
+    document.getElementById('conn-status').textContent = 'Conectado';
+    document.getElementById('conn-status').style.color = '#34d399';
+  };
+
+  eventSource.onerror = () => {
+    document.getElementById('conn-status').textContent = 'Reconectando...';
+    document.getElementById('conn-status').style.color = '#f59e0b';
+    setTimeout(connectSSE, 5000);
+  };
+}
+
+// ==========================================
+//  Add / Edit machine
+// ==========================================
+function openAddModal() {
+  editingId = null;
+  document.getElementById('modal-add-title').textContent = 'Nova Máquina';
+  document.getElementById('input-machine-name').value = '';
+  openModal('modal-add');
+  setTimeout(() => document.getElementById('input-machine-name').focus(), 100);
+}
+
+function openEditModal(id) {
+  editingId = id;
+  document.getElementById('modal-add-title').textContent = 'Renomear Máquina';
+  document.getElementById('input-machine-name').value = machines[id].name;
+  closeModal('modal-options');
+  openModal('modal-add');
+  setTimeout(() => document.getElementById('input-machine-name').focus(), 100);
+}
+
+async function saveMachine() {
+  const name = document.getElementById('input-machine-name').value.trim();
+  if (!name) { showToast('Digite um nome'); return; }
+  try {
+    if (editingId) {
+      const m = await api(`/machines/${editingId}`, 'PUT', { name });
+      machines[m.id] = m;
+    } else {
+      const m = await api('/machines', 'POST', { name });
+      machines[m.id] = m;
+    }
+    renderAll();
+    closeModal('modal-add');
+  } catch (e) {
+    showToast('Erro ao salvar');
+  }
+}
+
+// ==========================================
+//  Start session
+// ==========================================
+function openStart(id) {
+  startingId = id;
+  const m = machines[id];
+  document.getElementById('modal-start-title').textContent = `Iniciar — ${m.name}`;
+  document.getElementById('modal-start-subtitle').textContent = '';
+  document.querySelector('input[name="session-type"][value="timed"]').checked = true;
+  document.getElementById('input-hours').value = 0;
+  document.getElementById('input-minutes').value = 60;
+  document.getElementById('timed-inputs').style.display = '';
+  openModal('modal-start');
+}
+
+function toggleTimedInput() {
+  const isTimed = document.querySelector('input[name="session-type"]:checked').value === 'timed';
+  document.getElementById('timed-inputs').style.display = isTimed ? '' : 'none';
+}
+
+async function confirmStart() {
+  const type = document.querySelector('input[name="session-type"]:checked').value;
+  let duration = null;
+  if (type === 'timed') {
+    const h = parseInt(document.getElementById('input-hours').value) || 0;
+    const min = parseInt(document.getElementById('input-minutes').value) || 0;
+    duration = h * 60 + min;
+    if (duration <= 0) { showToast('Defina um tempo maior que zero'); return; }
+  }
+  try {
+    const m = await api(`/machines/${startingId}/start`, 'POST', { durationMinutes: duration });
+    machines[m.id] = m;
+    renderAll();
+    closeModal('modal-start');
+  } catch (e) {
+    showToast('Erro ao iniciar sessão');
+  }
+}
+
+// ==========================================
+//  Stop session
+// ==========================================
+async function stopSession(id) {
+  try {
+    const m = await api(`/machines/${id}/stop`, 'POST');
+    machines[m.id] = m;
+    renderAll();
+  } catch (e) {
+    showToast('Erro ao finalizar');
+  }
+}
+
+// ==========================================
+//  Options modal
+// ==========================================
+function openOptions(id) {
+  const m = machines[id];
+  document.getElementById('modal-options-title').textContent = m.name;
+
+  const btns = [];
+
+  if (m.status === 'AVAILABLE') {
+    btns.push(`<button onclick="openStart(${id}); closeModal('modal-options');" class="btn btn-green w-full text-left">▶ Iniciar sessão</button>`);
+    btns.push(`<button onclick="setStatus(${id},'OFFLINE')" class="btn btn-gray w-full text-left">⚫ Marcar como Offline</button>`);
+    btns.push(`<button onclick="setStatus(${id},'MAINTENANCE')" class="btn btn-yellow w-full text-left">🔧 Marcar como Manutenção</button>`);
+  }
+  if (m.status === 'BUSY') {
+    btns.push(`<button onclick="stopSession(${id}); closeModal('modal-options');" class="btn btn-red w-full text-left">⏹ Finalizar sessão</button>`);
+  }
+  if (m.status === 'OFFLINE' || m.status === 'MAINTENANCE') {
+    btns.push(`<button onclick="setStatus(${id},'AVAILABLE')" class="btn btn-green w-full text-left">✅ Marcar como Disponível</button>`);
+    if (m.status === 'OFFLINE') {
+      btns.push(`<button onclick="setStatus(${id},'MAINTENANCE')" class="btn btn-yellow w-full text-left">🔧 Marcar como Manutenção</button>`);
+    } else {
+      btns.push(`<button onclick="setStatus(${id},'OFFLINE')" class="btn btn-gray w-full text-left">⚫ Marcar como Offline</button>`);
+    }
+  }
+
+  btns.push(`<hr style="border-color:#334155; margin:4px 0;" />`);
+  btns.push(`<button onclick="openEditModal(${id})" class="btn btn-gray w-full text-left">✏️ Renomear</button>`);
+  btns.push(`<button onclick="confirmDelete(${id})" class="btn btn-red w-full text-left">🗑 Excluir máquina</button>`);
+
+  document.getElementById('modal-options-buttons').innerHTML = btns.join('');
+  openModal('modal-options');
+}
+
+async function setStatus(id, status) {
+  try {
+    const m = await api(`/machines/${id}/status`, 'POST', { status });
+    machines[m.id] = m;
+    renderAll();
+    closeModal('modal-options');
+  } catch (e) {
+    showToast('Erro ao alterar status');
+  }
+}
+
+async function confirmDelete(id) {
+  const name = machines[id]?.name || '';
+  if (!confirm(`Excluir "${name}"?`)) return;
+  try {
+    await api(`/machines/${id}`, 'DELETE');
+    delete machines[id];
+    renderAll();
+    closeModal('modal-options');
+  } catch (e) {
+    showToast('Erro ao excluir');
+  }
+}
+
+// ==========================================
+//  Modal helpers
+// ==========================================
+function openModal(id) {
+  document.getElementById(id).classList.remove('hidden');
+}
+function closeModal(id) {
+  document.getElementById(id).classList.add('hidden');
+}
+
+// Fechar modal ao clicar fora
+['modal-add','modal-start','modal-options'].forEach(id => {
+  document.getElementById(id).addEventListener('click', function(e) {
+    if (e.target === this) closeModal(id);
+  });
+});
+
+// Enter no input name
+document.getElementById('input-machine-name').addEventListener('keydown', e => {
+  if (e.key === 'Enter') saveMachine();
+});
+
+// ==========================================
+//  Toast
+// ==========================================
+let toastTimer = null;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 3000);
+}
+
+// ==========================================
+//  Beep (som de alerta)
+// ==========================================
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 200, 400].forEach(delay => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.3, ctx.currentTime + delay/1000);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + delay/1000 + 0.3);
+      osc.start(ctx.currentTime + delay/1000);
+      osc.stop(ctx.currentTime + delay/1000 + 0.3);
+    });
+  } catch(e) {}
+}
+
+// ==========================================
+//  Push Notifications
+// ==========================================
+let swRegistration = null;
+
+async function initServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    swRegistration = await navigator.serviceWorker.register('/sw.js');
+    checkNotifyPermission();
+  } catch (e) {
+    console.warn('SW registration failed', e);
+  }
+}
+
+function checkNotifyPermission() {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'default') {
+    document.getElementById('notify-banner').classList.remove('hidden');
+  } else if (Notification.permission === 'granted') {
+    subscribeForPush();
+  }
+}
+
+async function requestNotifyPermission() {
+  const perm = await Notification.requestPermission();
+  document.getElementById('notify-banner').classList.add('hidden');
+  if (perm === 'granted') {
+    subscribeForPush();
+    showToast('Notificações ativadas!');
+  } else {
+    showToast('Notificações bloqueadas no browser');
+  }
+}
+
+async function subscribeForPush() {
+  if (!swRegistration) return;
+  try {
+    const keyRes = await fetch('/api/push/vapid-public-key');
+    const { publicKey } = await keyRes.json();
+    if (!publicKey) return;
+
+    const sub = await swRegistration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey)
+    });
+
+    await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sub)
+    });
+  } catch (e) {
+    console.warn('Push subscription failed', e);
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+// ==========================================
+//  PWA Install
+// ==========================================
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredPrompt = e;
+  document.getElementById('install-banner').style.display = '';
+});
+
+async function installPwa() {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  const { outcome } = await deferredPrompt.userChoice;
+  deferredPrompt = null;
+  document.getElementById('install-banner').style.display = 'none';
+  if (outcome === 'accepted') showToast('App instalado!');
+}
+
+// ==========================================
+//  Boot
+// ==========================================
+loadMachines();
+connectSSE();
+initServiceWorker();
+</script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+version: '3.8'
+
+# Para VPS com HTTPS via nginx + certbot
+# Uso: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: lanhouse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lanhouse
+      POSTGRES_USER: lanhouse
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lanhouse123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - lanhouse-net
+
+  backend:
+    build: ./backend
+    container_name: lanhouse-backend
+    restart: unless-stopped
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/lanhouse
+      SPRING_DATASOURCE_USERNAME: lanhouse
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-lanhouse123}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SERVER_PORT: 8080
+      APP_BASE_URL: ${APP_BASE_URL:-https://seudominio.com}
+    depends_on:
+      - postgres
+    networks:
+      - lanhouse-net
+    # Sem expose de porta, nginx faz o proxy
+
+  nginx:
+    image: nginx:alpine
+    container_name: lanhouse-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot_www:/var/www/certbot:ro
+      - certbot_conf:/etc/letsencrypt:ro
+    depends_on:
+      - backend
+    networks:
+      - lanhouse-net
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot_www:/var/www/certbot
+      - certbot_conf:/etc/letsencrypt
+    # Rode manualmente: docker-compose run certbot certonly --webroot -w /var/www/certbot -d seudominio.com
+
+volumes:
+  postgres_data:
+  certbot_www:
+  certbot_conf:
+
+networks:
+  lanhouse-net:
+    driver: bridge
