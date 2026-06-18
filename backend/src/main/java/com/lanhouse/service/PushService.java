@@ -15,7 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.*;
-import java.security.interfaces.ECPublicKey;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 
@@ -49,15 +49,21 @@ public class PushService {
                 keyGen.initialize(spec, new SecureRandom());
                 KeyPair keyPair = keyGen.generateKeyPair();
 
-                // Public key: uncompressed EC point (65 bytes)
-                ECPublicKey ecPub = (ECPublicKey) keyPair.getPublic();
-                byte[] pubBytes = nl.martijndwars.webpush.Utils.savePublicKey(ecPub);
+                // Public key: uncompressed EC point (65 bytes, starts with 0x04)
+                org.bouncycastle.jce.interfaces.ECPublicKey bcPub =
+                        (org.bouncycastle.jce.interfaces.ECPublicKey) keyPair.getPublic();
+                byte[] pubBytes = bcPub.getQ().getEncoded(false);
                 String pub = Base64.getUrlEncoder().withoutPadding().encodeToString(pubBytes);
 
-                // Private key: raw scalar
-                byte[] privBytes = nl.martijndwars.webpush.Utils.savePrivateKey(
-                        (java.security.interfaces.ECPrivateKey) keyPair.getPrivate());
-                String priv = Base64.getUrlEncoder().withoutPadding().encodeToString(privBytes);
+                // Private key: raw 32-byte scalar (strip sign byte if present)
+                org.bouncycastle.jce.interfaces.ECPrivateKey bcPriv =
+                        (org.bouncycastle.jce.interfaces.ECPrivateKey) keyPair.getPrivate();
+                byte[] privRaw = bcPriv.getD().toByteArray();
+                // BigInteger.toByteArray() may add a leading 0x00 sign byte
+                if (privRaw.length == 33 && privRaw[0] == 0) {
+                    privRaw = java.util.Arrays.copyOfRange(privRaw, 1, 33);
+                }
+                String priv = Base64.getUrlEncoder().withoutPadding().encodeToString(privRaw);
 
                 stored = vapidKeyRepo.save(new VapidKey(pub, priv));
                 log.info("VAPID keys generated. Public key: {}", pub);
