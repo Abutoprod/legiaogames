@@ -1,17 +1,10 @@
 package com.lanhouse.model;
 
 import jakarta.persistence.*;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "machines")
-@Getter
-@Setter
-@NoArgsConstructor
 public class Machine {
 
     @Id
@@ -31,7 +24,23 @@ public class Machine {
     @OneToOne(mappedBy = "machine", cascade = CascadeType.ALL, fetch = FetchType.EAGER, orphanRemoval = true)
     private MachineSession currentSession;
 
+    public Machine() {}
+
     public Machine(String name) {
         this.name = name;
     }
+
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+
+    public MachineStatus getStatus() { return status; }
+    public void setStatus(MachineStatus status) { this.status = status; }
+
+    public LocalDateTime getCreatedAt() { return createdAt; }
+
+    public MachineSession getCurrentSession() { return currentSession; }
+    public void setCurrentSession(MachineSession currentSession) { this.currentSession = currentSession; }
 }

@@ -4,18 +4,18 @@ import com.lanhouse.model.PushSubscription;
 import com.lanhouse.model.VapidKey;
 import com.lanhouse.repository.PushSubscriptionRepository;
 import com.lanhouse.repository.VapidKeyRepository;
+import jakarta.annotation.PostConstruct;
 import nl.martijndwars.webpush.Notification;
-import nl.martijndwars.webpush.PushService;
-import nl.martijndwars.webpush.Utils;
+import org.bouncycastle.jce.ECNamedCurveTable;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.jce.spec.ECNamedCurveParameterSpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import jakarta.annotation.PostConstruct;
-import java.security.KeyPair;
-import java.security.Security;
+import java.security.*;
+import java.security.interfaces.ECPublicKey;
 import java.util.Base64;
 import java.util.List;
 
@@ -44,11 +44,21 @@ public class PushService {
         VapidKey stored = vapidKeyRepo.findById(1L).orElse(null);
         if (stored == null) {
             try {
-                KeyPair keyPair = Utils.generateVapidKeyPair();
-                String pub = Base64.getUrlEncoder().withoutPadding()
-                        .encodeToString(keyPair.getPublic().getEncoded());
-                String priv = Base64.getUrlEncoder().withoutPadding()
-                        .encodeToString(keyPair.getPrivate().getEncoded());
+                ECNamedCurveParameterSpec spec = ECNamedCurveTable.getParameterSpec("prime256v1");
+                KeyPairGenerator keyGen = KeyPairGenerator.getInstance("EC", "BC");
+                keyGen.initialize(spec, new SecureRandom());
+                KeyPair keyPair = keyGen.generateKeyPair();
+
+                // Public key: uncompressed EC point (65 bytes)
+                ECPublicKey ecPub = (ECPublicKey) keyPair.getPublic();
+                byte[] pubBytes = nl.martijndwars.webpush.Utils.savePublicKey(ecPub);
+                String pub = Base64.getUrlEncoder().withoutPadding().encodeToString(pubBytes);
+
+                // Private key: raw scalar
+                byte[] privBytes = nl.martijndwars.webpush.Utils.savePrivateKey(
+                        (java.security.interfaces.ECPrivateKey) keyPair.getPrivate());
+                String priv = Base64.getUrlEncoder().withoutPadding().encodeToString(privBytes);
+
                 stored = vapidKeyRepo.save(new VapidKey(pub, priv));
                 log.info("VAPID keys generated. Public key: {}", pub);
             } catch (Exception e) {
@@ -84,25 +94,26 @@ public class PushService {
 
     public void sendNotificationToAll(String title, String body) {
         if (vapidPublicKey == null || vapidPrivateKey == null) {
-            log.warn("VAPID keys not available, skipping push notification");
+            log.warn("VAPID keys not ready, skipping push");
             return;
         }
 
         List<PushSubscription> subscriptions = subscriptionRepo.findAll();
         if (subscriptions.isEmpty()) return;
 
-        String payload = String.format("{\"title\":\"%s\",\"body\":\"%s\"}", title, body);
+        String payload = "{\"title\":\"" + title + "\",\"body\":\"" + body + "\"}";
 
         try {
-            PushService pushService = new PushService(vapidPublicKey, vapidPrivateKey, "mailto:admin@lanhouse.local");
+            // Usa nome completo para evitar conflito com o nome desta classe
+            nl.martijndwars.webpush.PushService pushSvc =
+                    new nl.martijndwars.webpush.PushService(vapidPublicKey, vapidPrivateKey, "mailto:admin@lanhouse.local");
 
             for (PushSubscription sub : subscriptions) {
                 try {
                     Notification notification = new Notification(sub.getEndpoint(), sub.getP256dh(), sub.getAuth(), payload);
-                    pushService.send(notification);
+                    pushSvc.send(notification);
                 } catch (Exception e) {
-                    log.warn("Failed to send push to {}: {}", sub.getEndpoint(), e.getMessage());
-                    // Remove subscription inválida
+                    log.warn("Push failed for {}: {}", sub.getEndpoint(), e.getMessage());
                     subscriptionRepo.delete(sub);
                 }
             }
