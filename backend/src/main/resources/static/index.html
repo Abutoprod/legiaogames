@@ -398,7 +398,7 @@ async function loadMachines() {
   try {
     const list = await api('/machines');
     machines = {};
-    list.forEach(m => machines[m.id] = m);
+    list.forEach(m => { stampEndTime(m); machines[m.id] = m; });
     renderAll();
   } catch (e) {
     console.error('Erro ao carregar máquinas', e);
@@ -445,9 +445,10 @@ function renderCard(m) {
       timerHtml = `<div class="timer" style="color:#fca5a5;margin-top:10px;">∞</div>
                    <p style="font-size:12px;color:#9ca3af;">Sem limite</p>`;
     } else {
-      const t = formatSeconds(s.secondsRemaining);
-      const clr = s.secondsRemaining < 300 ? '#ef4444' : '#fca5a5';
-      timerHtml = `<div class="timer" style="color:${clr};margin-top:10px;" id="timer-${m.id}">${t}</div>
+      if (!s._endMs) s._endMs = Date.now() + s.secondsRemaining * 1000;
+      const remaining = getRemainingSeconds(s);
+      const clr = remaining < 300 ? '#ef4444' : '#fca5a5';
+      timerHtml = `<div class="timer" style="color:${clr};margin-top:10px;" id="timer-${m.id}">${formatSeconds(remaining)}</div>
                    <p style="font-size:12px;color:#9ca3af;">${s.durationMinutes} min total</p>`;
     }
   }
@@ -487,19 +488,34 @@ function pad(n) { return String(n).padStart(2, '0'); }
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 // ==========================================
-//  Timers (client-side countdown)
+//  Timers — usa relógio real para não derivar no iOS
 // ==========================================
+
+// Grava o momento exato em que recebemos o dado do servidor
+function stampEndTime(m) {
+  if (m.currentSession && m.currentSession.secondsRemaining !== -1) {
+    m.currentSession._endMs = Date.now() + m.currentSession.secondsRemaining * 1000;
+  }
+}
+
+// Calcula segundos restantes pelo relógio real
+function getRemainingSeconds(s) {
+  if (s.secondsRemaining === -1) return -1;
+  if (!s._endMs) return s.secondsRemaining; // fallback
+  return Math.max(0, Math.round((s._endMs - Date.now()) / 1000));
+}
+
 function tickTimers() {
   Object.values(machines).forEach(m => {
     if (m.status !== 'BUSY' || !m.currentSession) return;
     const s = m.currentSession;
     if (s.secondsRemaining === -1) return;
-    if (s.secondsRemaining > 0) s.secondsRemaining = Math.max(0, s.secondsRemaining - 1);
+    const remaining = getRemainingSeconds(s);
     const el = document.getElementById(`timer-${m.id}`);
     if (!el) return;
-    el.textContent = formatSeconds(s.secondsRemaining);
-    if (s.secondsRemaining < 300) el.style.color = '#ef4444';
-    if (s.secondsRemaining === 0) el.classList.add('pulse');
+    el.textContent = formatSeconds(remaining);
+    if (remaining < 300) el.style.color = '#ef4444';
+    if (remaining === 0) el.classList.add('pulse');
   });
 }
 setInterval(tickTimers, 1000);
@@ -512,8 +528,17 @@ function connectSSE() {
   if (eventSource) eventSource.close();
   eventSource = new EventSource('/api/events');
 
-  eventSource.addEventListener('update', e => { const m = JSON.parse(e.data); machines[m.id] = m; renderAll(); });
-  eventSource.addEventListener('tick',   e => { const m = JSON.parse(e.data); if (machines[m.id]) machines[m.id].currentSession = m.currentSession; });
+  eventSource.addEventListener('update', e => {
+    const m = JSON.parse(e.data);
+    stampEndTime(m);
+    machines[m.id] = m;
+    renderAll();
+  });
+  eventSource.addEventListener('tick', e => {
+    const m = JSON.parse(e.data);
+    stampEndTime(m);
+    if (machines[m.id]) machines[m.id].currentSession = m.currentSession;
+  });
   eventSource.addEventListener('delete', e => { delete machines[JSON.parse(e.data)]; renderAll(); });
   eventSource.addEventListener('expired', e => {
     const m = JSON.parse(e.data); machines[m.id] = m; renderAll();
