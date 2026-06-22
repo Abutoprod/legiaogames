@@ -442,8 +442,10 @@ function renderCard(m) {
   if (m.status === 'BUSY' && m.currentSession) {
     const s = m.currentSession;
     if (s.secondsRemaining === -1) {
-      timerHtml = `<div class="timer" style="color:#fca5a5;margin-top:10px;">∞</div>
-                   <p style="font-size:12px;color:#9ca3af;">Sem limite</p>`;
+      if (!s._startMs) s._startMs = Date.now() - (s.secondsElapsed || 0) * 1000;
+      const elapsed = getElapsedSeconds(s);
+      timerHtml = `<div class="timer" style="color:#fca5a5;margin-top:10px;" id="timer-${m.id}">${formatSeconds(elapsed)}</div>
+                   <p style="font-size:12px;color:#9ca3af;">em uso (sem limite)</p>`;
     } else {
       if (!s._endMs) s._endMs = Date.now() + s.secondsRemaining * 1000;
       const remaining = getRemainingSeconds(s);
@@ -491,31 +493,45 @@ function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replac
 //  Timers — usa relógio real para não derivar no iOS
 // ==========================================
 
-// Grava o momento exato em que recebemos o dado do servidor
+// Grava âncoras de tempo com base nos dados do servidor
 function stampEndTime(m) {
-  if (m.currentSession && m.currentSession.secondsRemaining !== -1) {
-    m.currentSession._endMs = Date.now() + m.currentSession.secondsRemaining * 1000;
+  const s = m.currentSession;
+  if (!s) return;
+  if (s.secondsRemaining === -1) {
+    // Sessão ilimitada: ancorar início pelo tempo já decorrido
+    s._startMs = Date.now() - (s.secondsElapsed || 0) * 1000;
+  } else {
+    // Sessão com tempo: ancorar fim
+    s._endMs = Date.now() + s.secondsRemaining * 1000;
   }
 }
 
-// Calcula segundos restantes pelo relógio real
 function getRemainingSeconds(s) {
-  if (s.secondsRemaining === -1) return -1;
-  if (!s._endMs) return s.secondsRemaining; // fallback
+  if (!s._endMs) return s.secondsRemaining;
   return Math.max(0, Math.round((s._endMs - Date.now()) / 1000));
+}
+
+function getElapsedSeconds(s) {
+  if (!s._startMs) return s.secondsElapsed || 0;
+  return Math.round((Date.now() - s._startMs) / 1000);
 }
 
 function tickTimers() {
   Object.values(machines).forEach(m => {
     if (m.status !== 'BUSY' || !m.currentSession) return;
     const s = m.currentSession;
-    if (s.secondsRemaining === -1) return;
-    const remaining = getRemainingSeconds(s);
     const el = document.getElementById(`timer-${m.id}`);
     if (!el) return;
-    el.textContent = formatSeconds(remaining);
-    if (remaining < 300) el.style.color = '#ef4444';
-    if (remaining === 0) el.classList.add('pulse');
+    if (s.secondsRemaining === -1) {
+      // Conta pra cima
+      el.textContent = formatSeconds(getElapsedSeconds(s));
+    } else {
+      // Conta pra baixo
+      const remaining = getRemainingSeconds(s);
+      el.textContent = formatSeconds(remaining);
+      if (remaining < 300) el.style.color = '#ef4444';
+      if (remaining === 0) el.classList.add('pulse');
+    }
   });
 }
 setInterval(tickTimers, 1000);

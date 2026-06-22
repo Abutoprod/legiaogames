@@ -44,6 +44,12 @@ public class MachineSession {
         return Math.max(0L, endEpoch - nowEpoch);
     }
 
+    public long getSecondsElapsed() {
+        long startEpoch = startTime.toEpochSecond(ZoneOffset.UTC);
+        long nowEpoch = LocalDateTime.now().toEpochSecond(ZoneOffset.UTC);
+        return Math.max(0L, nowEpoch - startEpoch);
+    }
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
