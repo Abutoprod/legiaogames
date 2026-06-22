@@ -442,7 +442,11 @@ function renderCard(m) {
   if (m.status === 'BUSY' && m.currentSession) {
     const s = m.currentSession;
     if (s.secondsRemaining === -1) {
-      if (!s._startMs) s._startMs = Date.now() - (s.secondsElapsed || 0) * 1000;
+      // stampEndTime já garantiu _startMs via localStorage; fallback só por segurança
+      if (!s._startMs) {
+        const stored = localStorage.getItem(sessionKey(m.id));
+        s._startMs = stored ? Number(stored) : Date.now();
+      }
       const elapsed = getElapsedSeconds(s);
       timerHtml = `<div class="timer" style="color:#fca5a5;margin-top:10px;" id="timer-${m.id}">${formatSeconds(elapsed)}</div>
                    <p style="font-size:12px;color:#9ca3af;">em uso (sem limite)</p>`;
@@ -493,16 +497,36 @@ function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replac
 //  Timers — usa relógio real para não derivar no iOS
 // ==========================================
 
-// Grava âncoras de tempo com base nos dados do servidor
+// Chave localStorage para sessão ilimitada de uma máquina
+function sessionKey(id) { return 'sess_start_' + id; }
+
 function stampEndTime(m) {
   const s = m.currentSession;
-  if (!s) return;
+  if (!s) {
+    // Máquina parou — limpa localStorage
+    try { localStorage.removeItem(sessionKey(m.id)); } catch(e) {}
+    return;
+  }
   if (s.secondsRemaining === -1) {
-    // Sessão ilimitada: ancorar início pelo tempo já decorrido
-    s._startMs = Date.now() - (s.secondsElapsed || 0) * 1000;
+    // Sessão ilimitada
+    // Preferência: servidor informa secondsElapsed (tempo desde o início)
+    // Se vier > 0, calcula o startMs real e persiste no localStorage
+    // Se vier 0 (acabou de iniciar ou server não enviou), usa localStorage se tiver
+    const elapsed = s.secondsElapsed || 0;
+    let startMs;
+    if (elapsed > 0) {
+      startMs = Date.now() - elapsed * 1000;
+      try { localStorage.setItem(sessionKey(m.id), String(startMs)); } catch(e) {}
+    } else {
+      const stored = localStorage.getItem(sessionKey(m.id));
+      startMs = stored ? Number(stored) : Date.now();
+      try { localStorage.setItem(sessionKey(m.id), String(startMs)); } catch(e) {}
+    }
+    s._startMs = startMs;
   } else {
-    // Sessão com tempo: ancorar fim
+    // Sessão com tempo definido — não mexer, só ancorar o fim
     s._endMs = Date.now() + s.secondsRemaining * 1000;
+    try { localStorage.removeItem(sessionKey(m.id)); } catch(e) {}
   }
 }
 
@@ -546,7 +570,7 @@ function connectSSE() {
 
   eventSource.addEventListener('update', e => {
     const m = JSON.parse(e.data);
-    stampEndTime(m);
+    stampEndTime(m); // limpa localStorage se não for mais BUSY
     machines[m.id] = m;
     renderAll();
   });
